@@ -1,6 +1,4 @@
-// --- App.tsx ---
-
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import './styles/index.css';
 import { CanopyConfig, CalculationResult } from './types';
 import { Controls } from './components/Controls';
@@ -11,12 +9,13 @@ import { exportToDxf } from './lib/dxfExporter';
 import { exportToTxt } from './lib/textExporter';
 
 const INITIAL_CONFIG: CanopyConfig = {
-  width: 6660, // Общая ширина из чертежа (500 + 7*675 + 500 + 80*2) - немного не сходится, возьмем 6660
-  height: 882,
-  roofAngle: 15,
-  trussType: 'W',
-  region: 'III', // Условный регион, можно поменять
-  spacing: 3000, // Условный шаг, можно поменять
+  trussWidth: 6660,
+  trussHeight: 882,
+  columnHeight: 2000,
+  columnSpacing: 5500,
+  columnWidth: 80,
+  region: 'III',
+  trussSpacing: 3000,
 };
 
 function App() {
@@ -27,6 +26,11 @@ function App() {
     const calculationResult = runCalculation(config);
     setResult(calculationResult);
   }, [config]);
+
+  // Запускаем расчет при первой загрузке
+  useEffect(() => {
+    handleCalculate();
+  }, []);
 
   const downloadFile = (filename: string, content: string, mimeType: string) => {
     const element = document.createElement("a");
@@ -41,14 +45,14 @@ function App() {
   const handleExportDxf = useCallback(() => {
     if (result) {
       const dxfContent = exportToDxf(result);
-      downloadFile(`canopy_${result.config.width}x${result.config.height}.dxf`, dxfContent, 'application/dxf');
+      downloadFile(`canopy_${result.config.trussWidth}x${result.config.trussHeight}.dxf`, dxfContent, 'application/dxf');
     }
   }, [result]);
 
   const handleExportTxt = useCallback(() => {
     if (result) {
       const txtContent = exportToTxt(result);
-      downloadFile(`spec_${result.config.width}x${result.config.height}.txt`, txtContent, 'text/plain');
+      downloadFile(`spec_${result.config.trussWidth}x${result.config.trussHeight}.txt`, txtContent, 'text/plain');
     }
   }, [result]);
 
