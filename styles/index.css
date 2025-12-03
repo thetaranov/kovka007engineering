@@ -1,0 +1,66 @@
+/* --- styles/index.css --- */
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #f0f2f5;
+  color: #1f2937;
+}
+
+.app-container {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  grid-template-rows: 100vh;
+  gap: 16px;
+  height: 100vh;
+  width: 100vw;
+  box-sizing: border-box;
+}
+
+.controls-panel {
+  background-color: white;
+  padding: 24px;
+  overflow-y: auto;
+  border-right: 1px solid #e5e7eb;
+}
+
+.drawing-area {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.drawing-viewer {
+  flex-grow: 1;
+  background-color: #fff;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  /* Фон-сетка */
+  background-image:
+    linear-gradient(to right, #e5e7eb 1px, transparent 1px),
+    linear-gradient(to bottom, #e5e7eb 1px, transparent 1px);
+  background-size: 100px 100px; /* Шаг основной сетки 1м (при масштабе 100px = 1m) */
+  background-position: -1px -1px;
+}
+
+.specification-table {
+  background-color: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  padding: 16px;
+  height: 250px;
+  overflow-y: auto;
+}
+
+/* Стили для элементов управления (добавим позже в Controls.tsx) */
