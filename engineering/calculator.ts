@@ -7,67 +7,87 @@ import { analyzeTruss } from './trussAnalysis';
 
 /**
  * Главная функция, выполняющая полный цикл расчета навеса.
- * @param config - Входные параметры от пользователя.
- * @returns {CalculationResult} - Готовый объект с результатами.
  */
 export function runCalculation(config: CanopyConfig): CalculationResult {
-  // 1. Расчет нагрузок
+  // 1. Расчет нагрузок (в кг/м²)
   const snowLoad = calculateSnowLoad(config.region, config.roofAngle);
   const windLoad = calculateWindLoad();
-  // Нагрузка на ферму (кг/м) = нагрузка (кг/м²) * шаг ферм (м)
-  const totalLoadPerMeter = (snowLoad + windLoad) * (config.spacing / 1000);
-  const totalLoadPerMeterKN = totalLoadPerMeter * 9.81 / 1000; // в кН/м
+  const totalLoadPerSqm = snowLoad + windLoad;
 
   // 2. Построение геометрии фермы
   const trussGeometry = buildTrussGeometry(config);
 
-  // 3. Статический анализ (используем заглушку)
-  const membersWithForces = analyzeTruss(trussGeometry, totalLoadPerMeterKN);
+  // 3. Распределение нагрузки по узлам
+  const nodeLoads = new Array(trussGeometry.nodes.length).fill(0);
+  const tributaryWidth = config.spacing / 1000; // Ширина сбора нагрузки на ферму, в метрах
 
-  // 4. Подбор сечений и создание спецификации
+  // Находим узлы верхнего пояса (кроме опорных)
+  const upperChordInternalNodes = trussGeometry.members
+    .filter(m => m.id.startsWith('Верхний'))
+    .flatMap(m => [m.startNode, m.endNode])
+    .filter((nodeIdx) => {
+        const node = trussGeometry.nodes[nodeIdx];
+        // Исключаем опорные узлы (те, что на y=0)
+        return node.y > 1e-6; 
+    })
+    .filter((value, index, self) => self.indexOf(value) === index); // Оставляем только уникальные
+
+  // Площадь сбора на один узел (упрощенно: шаг ферм * шаг панелей)
+  const panelWidthMeters = (config.width / 1000) / (trussGeometry.members.filter(m => m.id.startsWith('Нижний')).length);
+  const loadPerNodeKg = totalLoadPerSqm * tributaryWidth * panelWidthMeters;
+  const loadPerNodeKN = (loadPerNodeKg * 9.81) / 1000; // в кН
+
+  upperChordInternalNodes.forEach(nodeIndex => {
+    // Нагрузка прикладывается вертикально вниз
+    nodeLoads[nodeIndex] = -loadPerNodeKN;
+  });
+
+  // 4. Статический анализ
+  const membersWithForces = analyzeTruss(trussGeometry, nodeLoads);
+
+  // 5. Подбор сечений и создание спецификации
   const finalMembers: TrussMember[] = [];
   const specMap: Map<string, SpecificationItem> = new Map();
 
   membersWithForces.forEach(member => {
-    // ЗАГЛУШКА: Упрощенный подбор профиля.
-    // Реальный расчет требует проверки на устойчивость (гибкость).
     const isCompressed = member.force < 0;
-    let requiredArea = Math.abs(member.force) / (21 * 0.9); // Упрощенная формула прочности, кН / (кН/см²)
+    // Расчетная прочность стали С245 Ry=240 МПа = 24 кН/см²
+    const designResistance = 24 * 0.9; // Ry * gamma_c
+
+    let requiredArea = Math.abs(member.force) / designResistance;
     let requiredInertia = 0;
 
     if (isCompressed) {
-        // Упрощенная формула для требуемого момента инерции от гибкости
-        const flexibility = 100; // Принимаем условную гибкость
-        requiredInertia = (requiredArea * (member.length / 10) ** 2) / (Math.PI ** 2 * 21000) * flexibility;
+        // Упрощенная формула Эйлера для требуемого момента инерции от гибкости
+        // I_req ≈ (F * (μ * L)^2) / (π² * E)
+        const E_knsm2 = 2.06e4; // Модуль упругости в кН/см²
+        const mu = 0.9; // Коэффициент расчетной длины для сжатых стержней решетки
+        const lef_cm = mu * (member.length / 10);
+        requiredInertia = (Math.abs(member.force) * lef_cm ** 2) / (Math.PI ** 2 * E_knsm2);
     }
 
     const profile = findOptimalProfile(requiredArea, requiredInertia);
 
     if (profile) {
       finalMembers.push({ ...member, profile });
-
-      const baseName = member.id.split(' ')[0]; // "Верхний", "Нижний" и т.д.
+      const baseName = member.id.split(' ')[0];
       const key = `${baseName}|${profile.name}`;
 
-      if (specMap.has(key)) {
-        const item = specMap.get(key)!;
+      const item = specMap.get(key);
+      if (item) {
         item.count++;
         item.totalLength += member.length / 1000;
       } else {
         specMap.set(key, {
-          name: baseName,
-          profileName: profile.name,
-          length: member.length,
-          count: 1,
-          totalLength: member.length / 1000,
+          name: baseName, profileName: profile.name, length: member.length,
+          count: 1, totalLength: member.length / 1000,
         });
       }
     }
   });
 
   const specification = Array.from(specMap.values()).map(item => ({
-      ...item,
-      totalLength: parseFloat(item.totalLength.toFixed(2)),
+      ...item, totalLength: parseFloat(item.totalLength.toFixed(2)),
   }));
 
   return {
@@ -79,47 +99,68 @@ export function runCalculation(config: CanopyConfig): CalculationResult {
 }
 
 /**
- * Строит геометрию фермы на основе конфигурации.
- * (Реализовано для W-образной двускатной фермы)
+ * Строит параметрическую геометрию W-образной фермы.
  */
 function buildTrussGeometry(config: CanopyConfig): CalculatedTruss {
   const { width, height } = config;
   const nodes: { x: number; y: number }[] = [];
   const members: Omit<TrussMember, 'profile' | 'force'>[] = [];
 
-  // Основные узлы
-  nodes.push({ x: 0, y: 0 }); // 0 - Левая опора
-  nodes.push({ x: width / 2, y: height }); // 1 - Конек
-  nodes.push({ x: width, y: 0 }); // 2 - Правая опора
-  nodes.push({ x: width / 4, y: 0 }); // 3 - Узел нижнего пояса
-  nodes.push({ x: (width * 3) / 4, y: 0 }); // 4 - Узел нижнего пояса
-  nodes.push({ x: width / 4, y: height / 2 }); // 5 - Узел верхнего пояса
-  nodes.push({ x: (width * 3) / 4, y: height / 2 }); // 6 - Узел верхнего пояса
+  // Определяем количество панелей, должно быть четным. Примерно 1.2м на панель.
+  let numPanels = Math.max(4, Math.floor(width / 1200) * 2);
+  if (numPanels % 2 !== 0) numPanels++;
 
-  // Функция для добавления стержня
-  const addMember = (start: number, end: number, id: string) => {
-    const startNode = nodes[start];
-    const endNode = nodes[end];
-    const length = Math.hypot(endNode.x - startNode.x, endNode.y - startNode.y);
-    members.push({ id, startNode: start, endNode: end, length });
+  const panelWidth = width / numPanels;
+  const halfNumPanels = numPanels / 2;
+
+  // Создаем узлы нижнего и верхнего поясов
+  const lowerNodesIdx: number[] = [];
+  const upperNodesIdx: number[] = [];
+
+  for (let i = 0; i <= numPanels; i++) {
+    // Нижний пояс
+    nodes.push({ x: i * panelWidth, y: 0 });
+    lowerNodesIdx.push(nodes.length - 1);
+
+    // Верхний пояс (кроме опор)
+    if (i > 0 && i < numPanels) {
+      const x = i * panelWidth;
+      const y = i <= halfNumPanels
+        ? (x * (height / (width / 2)))
+        : ((width - x) * (height / (width / 2)));
+      nodes.push({ x, y });
+      upperNodesIdx.push(nodes.length - 1);
+    }
+  }
+
+  const addMember = (startIdx: number, endIdx: number, id: string) => {
+    const len = Math.hypot(nodes[endIdx].x - nodes[startIdx].x, nodes[endIdx].y - nodes[startIdx].y);
+    members.push({ id, startNode: startIdx, endNode: endIdx, length: len });
   };
 
-  // Верхний пояс
-  addMember(0, 5, "Верхний пояс 1");
-  addMember(5, 1, "Верхний пояс 2");
-  addMember(1, 6, "Верхний пояс 3");
-  addMember(6, 2, "Верхний пояс 4");
+  // Стержни поясов
+  for (let i = 0; i < numPanels; i++) {
+    addMember(lowerNodesIdx[i], lowerNodesIdx[i+1], `Нижний пояс ${i+1}`);
+  }
+  // Верхний пояс сложнее, т.к. узлы разбросаны
+  addMember(lowerNodesIdx[0], upperNodesIdx[0], `Верхний пояс 1`);
+  for (let i = 0; i < upperNodesIdx.length - 1; i++) {
+     addMember(upperNodesIdx[i], upperNodesIdx[i+1], `Верхний пояс ${i+2}`);
+  }
+  addMember(upperNodesIdx[upperNodesIdx.length - 1], lowerNodesIdx[numPanels], `Верхний пояс ${numPanels}`);
 
-  // Нижний пояс
-  addMember(0, 3, "Нижний пояс 1");
-  addMember(3, 4, "Нижний пояс 2");
-  addMember(4, 2, "Нижний пояс 3");
-
-  // Решетка (W-тип)
-  addMember(5, 3, "Раскос 1");
-  addMember(1, 3, "Стойка 1");
-  addMember(1, 4, "Стойка 2");
-  addMember(6, 4, "Раскос 2");
+  // Стержни решетки (W-тип)
+  for (let i = 0; i < halfNumPanels; i++) {
+    // Левая половина
+    addMember(upperNodesIdx[i], lowerNodesIdx[i], `Стойка ${i+1}`);
+    addMember(upperNodesIdx[i], lowerNodesIdx[i+1], `Раскос ${i+1}`);
+    // Правая половина (зеркально)
+    const upperRightIdx = upperNodesIdx[numPanels - 2 - i];
+    const lowerRightIdx1 = lowerNodesIdx[numPanels - 1 - i];
+    const lowerRightIdx2 = lowerNodesIdx[numPanels - i];
+    addMember(upperRightIdx, lowerRightIdx1, `Раскос ${halfNumPanels + i + 1}`);
+    addMember(upperRightIdx, lowerRightIdx2, `Стойка ${halfNumPanels + i + 1}`);
+  }
 
   return { nodes, members: members as any };
 }

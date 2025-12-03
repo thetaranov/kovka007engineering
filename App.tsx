@@ -11,12 +11,12 @@ import { exportToDxf } from './lib/dxfExporter';
 import { exportToTxt } from './lib/textExporter';
 
 const INITIAL_CONFIG: CanopyConfig = {
-  width: 5500,
+  width: 6660, // Общая ширина из чертежа (500 + 7*675 + 500 + 80*2) - немного не сходится, возьмем 6660
   height: 882,
   roofAngle: 15,
   trussType: 'W',
-  region: 'III',
-  spacing: 1500,
+  region: 'III', // Условный регион, можно поменять
+  spacing: 3000, // Условный шаг, можно поменять
 };
 
 function App() {
